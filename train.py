@@ -80,23 +80,17 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
     if epoch < warm_up:
         for param in model.module.attn.parameters():
             param.requires_grad = False
-        for param in model.module.linear1.parameters():
-            param.requires_grad = False
-        for param in model.module.linear2.parameters():
+        for param in model.module.linear.parameters():
             param.requires_grad = False
     elif warm_up <= epoch < (warm_up + joint):
         for param in model.module.attn.parameters():
             param.requires_grad = True
-        for param in model.module.linear1.parameters():
+        for param in model.module.linear.parameters():
             param.requires_grad = True
-        for param in model.module.linear2.parameters():
-            param.requires_grad = False
     else:
         for param in model.module.attn.parameters():
             param.requires_grad = False
-        for param in model.module.linear1.parameters():
-            param.requires_grad = False
-        for param in model.module.linear2.parameters():
+        for param in model.module.linear.parameters():
             param.requires_grad = False
 
     for batch_idx, (input_list, target) in enumerate(loader):

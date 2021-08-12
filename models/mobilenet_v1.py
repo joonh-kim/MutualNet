@@ -88,9 +88,11 @@ class Model(nn.Module):
         self.pool = nn.AdaptiveMaxPool2d(output_size=(28, 28))
         self.LN = nn.LayerNorm(normalized_shape=[28, 28], elementwise_affine=False)
         self.attn = nn.Conv2d(1, 1, 3, padding=1)
-        self.linear1 = nn.Linear(28 * 28, 14 * 14)
-        self.relu = nn.ReLU()
-        self.linear2 = nn.Linear(14 * 14, len(FLAGS.width_mult_list))
+        self.linear = nn.Sequential(
+            nn.Linear(28 * 28, 14 * 14),
+            nn.ReLU(),
+            nn.Linear(14 * 14, len(FLAGS.width_mult_list))
+        )
 
         if FLAGS.reset_parameters:
             self.reset_parameters()
@@ -109,7 +111,7 @@ class Model(nn.Module):
             # dct, attention, gumbel softmax
             x = self.LN(self.pool(dct_2d(x)))
             attn = torch.sigmoid(self.attn(x))
-            x = self.linear2(self.relu(self.linear1((x * attn).reshape(n, -1))))
+            x = self.linear((x * attn).reshape(n, -1))
             x = F.gumbel_softmax(F.softmax(x, dim=1), tau=tau, hard=True, dim=1)
         else:
             x = self.features(x)
