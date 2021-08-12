@@ -1,10 +1,12 @@
 import math
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 from .slimmable_ops import USBatchNorm2d, USConv2d, USLinear, make_divisible
 from utils.config import FLAGS
-
+from utils.dct import *
 
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, inp, outp, stride):
@@ -81,14 +83,39 @@ class Model(nn.Module):
         self.classifier = nn.Sequential(
             USLinear(self.outp, num_classes, us=[True, False])
         )
+
+        # policy network
+        self.pool = nn.AdaptiveMaxPool2d(output_size=(28, 28))
+        self.LN = nn.LayerNorm(normalized_shape=[28, 28], elementwise_affine=False)
+        self.attn = nn.Conv2d(1, 1, 3, padding=1)
+        self.linear1 = nn.Linear(28 * 28, 14 * 14)
+        self.relu = nn.ReLU()
+        self.linear2 = nn.Linear(14 * 14, len(FLAGS.width_mult_list))
+
         if FLAGS.reset_parameters:
             self.reset_parameters()
 
-    def forward(self, x):
-        x = self.features(x)
-        last_dim = x.size()[1]
-        x = x.view(-1, last_dim)
-        x = self.classifier(x)
+    def forward(self, x, tau=None, policy=False):
+        if policy:
+            # denormalize and convert to gray scale
+            n, c, h, w = x.size()
+            x = x.permute(1, 0, 2, 3).reshape(c, -1)
+            mean, std, togray = torch.tensor([0.485, 0.456, 0.406]).cuda(non_blocking=True), \
+                                torch.tensor([0.229, 0.224, 0.225]).cuda(non_blocking=True), \
+                                torch.tensor([0.2989, 0.5870, 0.1140]).cuda(non_blocking=True)
+            for t, m, s in zip(x, mean, std):
+                t.mul_(s).add_(m)
+            x = (x * 255 * togray.unsqueeze(-1)).sum(dim=0, keepdim=True).view(n, 1, h, w)
+            # dct, attention, gumbel softmax
+            x = self.LN(self.pool(dct_2d(x)))
+            attn = torch.sigmoid(self.attn(x))
+            x = self.linear2(self.relu(self.linear1((x * attn).reshape(n, -1))))
+            x = F.gumbel_softmax(F.softmax(x, dim=1), tau=tau, hard=True, dim=1)
+        else:
+            x = self.features(x)
+            last_dim = x.size()[1]
+            x = x.view(-1, last_dim)
+            x = self.classifier(x)
         return x
 
     def reset_parameters(self):
