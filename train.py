@@ -145,7 +145,7 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
     tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
     with torch.no_grad():
         for batch_idx, (input_list, target) in enumerate(loader):
-            input, target = input.cuda(non_blocking=True), target.cuda(non_blocking=True)
+            target = target.cuda(non_blocking=True)
             policy_mask = model(input_list[-1], tau=tau, policy=True)
             output_list = torch.zeros(len(FLAGS.width_mult_list), target.size()[0], FLAGS.num_classes).cuda(
                 non_blocking=True)
