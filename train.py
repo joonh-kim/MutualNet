@@ -153,7 +153,7 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
             model = ComputePostBN.ComputeBN(model, postloader, FLAGS.resolution_list[policy_idx])
             for batch_idx, (input_list, target) in enumerate(loader):
                 target = target.cuda(non_blocking=True)
-                policy_mask = torch.LongTensor(policy_mask_list[batch_idx]).permute(1, 0)[policy_idx].cuda()
+                policy_mask = torch.LongTensor(policy_mask_list[batch_idx, :target.size()[0], :]).permute(1, 0)[policy_idx].cuda()
                 target = (target + 1) * policy_mask - 1
                 output = model(input_list[policy_idx])
                 loss += criterion(output, target).cpu().numpy() * policy_mask.sum().cpu().numpy()
