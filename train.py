@@ -141,26 +141,23 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
 def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
     t_start = time.time()
     model.eval()
-    resolution = FLAGS.image_size
-    tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
     with torch.no_grad():
-        model = ComputePostBN.ComputeBN(model, postloader, resolution)
-        for batch_idx, (input_list, target) in enumerate(loader):
-            target = target.cuda(non_blocking=True)
-            policy_mask = model(input_list[-1], tau=tau, policy=True)
-            output_list = torch.zeros(len(FLAGS.width_mult_list), target.size()[0], FLAGS.num_classes).cuda(
-                non_blocking=True)
-            for idx, width_mult in enumerate(sorted(FLAGS.width_mult_list, reverse=True)):
-                model.apply(lambda m: setattr(m, 'width_mult', width_mult))
-                output_i = model(input_list[idx])
-                output_list[idx] = output_i
-            output = (policy_mask.permute(1, 0).unsqueeze(-1) * output_list).sum(dim=0)
-            loss, acc, cnt, MFLOPS = 0, 0, 0, 0
-            loss += criterion(output, target).cpu().numpy() * target.size()[0]
-            indices = torch.max(output, dim=1)[1]
-            acc += (indices == target).sum().cpu().numpy()
-            cnt += target.size()[0]
-            MFLOPS += (policy_mask * MFLOPS_table.unsqueeze(0)).sum()
+        tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
+        loss, acc, cnt, MFLOPS = 0, 0, 0, 0
+        for policy_idx, width_mult in enumerate(sorted(FLAGS.width_mult_list, reverse=True)):
+            model.apply(lambda m: setattr(m, 'width_mult', width_mult))
+            model = ComputePostBN.ComputeBN(model, postloader, FLAGS.resolution_list[policy_idx])
+            for batch_idx, (input_list, target) in enumerate(loader):
+                target = target.cuda(non_blocking=True)
+                policy_mask = model(input_list[-1], tau=tau, policy=True).permute(1, 0)[policy_idx]
+                target = (target + 1) * policy_mask.type(torch.LongTensor).cuda(non_blocking=True) - 1
+                output = model(input_list[policy_idx])
+                loss += criterion(output, target).cpu().numpy() * policy_mask.sum().item()
+                indices = torch.max(output, dim=1)[1]
+                acc += ((indices == target) * policy_mask).sum().cpu().numpy()
+                cnt += policy_mask.sum().item()
+                MFLOPS += (policy_mask * MFLOPS_table[policy_idx]).sum().cpu().numpy()
+        assert int(len(loader.dataset)) == int(cnt)
         logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS(avg):{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
             time.time() - t_start, tau, MFLOPS/cnt, epoch,
             FLAGS.num_epochs, loss/cnt, acc/cnt))
@@ -175,6 +172,7 @@ def train_val_test():
     model = get_model()
     model_wrapper = torch.nn.DataParallel(model).cuda()
     criterion = torch.nn.CrossEntropyLoss().cuda()
+    criterion_val = torch.nn.CrossEntropyLoss(ignore_index=-1)
     train_loader, val_loader = get_dataset()
     MFLOPS_table = torch.tensor(FLAGS.MFLOPS_table).cuda(non_blocking=True)
 
@@ -223,7 +221,7 @@ def train_val_test():
 
     if FLAGS.test_only:
         logger.info('Start testing.')
-        validate(last_epoch, val_loader, model_wrapper, criterion, train_loader, MFLOPS_table)
+        validate(last_epoch, val_loader, model_wrapper, criterion_val, train_loader, MFLOPS_table)
         return
 
     logger.info('Start training.')
@@ -232,7 +230,7 @@ def train_val_test():
         train(epoch, FLAGS.warm_up, FLAGS.joint, train_loader, model_wrapper, criterion, optimizer, lr_scheduler, MFLOPS_table)
 
         # val
-        validate(epoch, val_loader, model_wrapper, criterion, train_loader, MFLOPS_table)
+        validate(epoch, val_loader, model_wrapper, criterion_val, train_loader, MFLOPS_table)
 
         # lr_scheduler.step()
         torch.save(
