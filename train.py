@@ -92,6 +92,7 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
             param.requires_grad = False
         for param in model.module.linear.parameters():
             param.requires_grad = False
+    tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
 
     for batch_idx, (input_list, target) in enumerate(loader):
         target = target.cuda(non_blocking=True)
@@ -106,7 +107,6 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
         max_output_detach = max_output.detach()
 
         # policy selection
-        tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
         policy_mask = model(input_list[-1], tau=tau, policy=True)
         mask = policy_mask[:, 1:].clone()
 
@@ -144,6 +144,7 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
     resolution = FLAGS.image_size
     tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
     with torch.no_grad():
+        model = ComputePostBN.ComputeBN(model, postloader, resolution)
         for batch_idx, (input_list, target) in enumerate(loader):
             target = target.cuda(non_blocking=True)
             policy_mask = model(input_list[-1], tau=tau, policy=True)
@@ -151,7 +152,6 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
                 non_blocking=True)
             for idx, width_mult in enumerate(sorted(FLAGS.width_mult_list, reverse=True)):
                 model.apply(lambda m: setattr(m, 'width_mult', width_mult))
-                model = ComputePostBN.ComputeBN(model, postloader, resolution)
                 output_i = model(input_list[idx])
                 output_list[idx] = output_i
             output = (policy_mask.permute(1, 0).unsqueeze(-1) * output_list).sum(dim=0)
