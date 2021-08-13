@@ -157,7 +157,6 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
                 acc += ((indices == target) * policy_mask).sum().cpu().numpy()
                 cnt += policy_mask.sum().item()
                 MFLOPS += (policy_mask * MFLOPS_table[policy_idx]).sum().cpu().numpy()
-        assert int(len(loader.dataset)) == int(cnt)
         logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS(avg):{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
             time.time() - t_start, tau, MFLOPS/cnt, epoch,
             FLAGS.num_epochs, loss/cnt, acc/cnt))
