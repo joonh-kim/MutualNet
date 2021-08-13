@@ -111,7 +111,7 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
         mask = policy_mask[:, 1:].clone()
 
         # do other widths and resolution
-        output_list = torch.zeros(len(FLAGS.width_mult_list) - 1, FLAGS.batch_size, FLAGS.num_classes).cuda(non_blocking=True)
+        output_list = torch.zeros(len(FLAGS.width_mult_list) - 1, target.size()[0], FLAGS.num_classes).cuda(non_blocking=True)
         for idx, width_mult in enumerate(sorted(FLAGS.width_mult_list[:-1], reverse=True)):
             model.apply(
                 lambda m: setattr(m, 'width_mult', width_mult))
@@ -147,7 +147,7 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
         for batch_idx, (input_list, target) in enumerate(loader):
             input, target = input.cuda(non_blocking=True), target.cuda(non_blocking=True)
             policy_mask = model(input_list[-1], tau=tau, policy=True)
-            output_list = torch.zeros(len(FLAGS.width_mult_list), FLAGS.batch_size, FLAGS.num_classes).cuda(
+            output_list = torch.zeros(len(FLAGS.width_mult_list), target.size()[0], FLAGS.num_classes).cuda(
                 non_blocking=True)
             for idx, width_mult in enumerate(sorted(FLAGS.width_mult_list, reverse=True)):
                 model.apply(lambda m: setattr(m, 'width_mult', width_mult))
