@@ -112,7 +112,7 @@ class Model(nn.Module):
             x = self.LN(self.pool(dct_2d(x)))
             attn = torch.sigmoid(self.attn(x))
             x = self.linear((x * attn).reshape(n, -1))
-            x = F.gumbel_softmax(F.softmax(x, dim=1), tau=tau, hard=True, dim=1)
+            x = F.gumbel_softmax(F.log_softmax(x, dim=1), tau=tau, hard=True, dim=1)
         else:
             x = self.features(x)
             last_dim = x.size()[1]

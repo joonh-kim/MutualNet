@@ -143,20 +143,26 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
     model.eval()
     with torch.no_grad():
         tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
+        policy_mask_list = torch.zeros(len(loader), FLAGS.batch_size, len(FLAGS.width_mult_list))
+        for batch_idx, (input_list, target) in enumerate(loader):
+            policy_mask_list[batch_idx, :target.size()[0], :] = model(input_list[-1], tau=tau, policy=True)
+        policy_mask_list = policy_mask_list.detach().cpu().numpy()
         loss, acc, cnt, MFLOPS = 0, 0, 0, 0
         for policy_idx, width_mult in enumerate(sorted(FLAGS.width_mult_list, reverse=True)):
             model.apply(lambda m: setattr(m, 'width_mult', width_mult))
             model = ComputePostBN.ComputeBN(model, postloader, FLAGS.resolution_list[policy_idx])
             for batch_idx, (input_list, target) in enumerate(loader):
                 target = target.cuda(non_blocking=True)
-                policy_mask = model(input_list[-1], tau=tau, policy=True).permute(1, 0)[policy_idx]
-                target = (target + 1) * policy_mask.type(torch.LongTensor).cuda(non_blocking=True) - 1
+                policy_mask = torch.LongTensor(policy_mask_list[batch_idx]).permute(1, 0)[policy_idx].cuda()
+                target = (target + 1) * policy_mask - 1
                 output = model(input_list[policy_idx])
-                loss += criterion(output, target).cpu().numpy() * policy_mask.sum().item()
+                loss += criterion(output, target).cpu().numpy() * policy_mask.sum().cpu().numpy()
                 indices = torch.max(output, dim=1)[1]
-                acc += ((indices == target) * policy_mask).sum().cpu().numpy()
-                cnt += policy_mask.sum().item()
+                acc += (indices == target).sum().cpu().numpy()
+                cnt += policy_mask.sum().cpu().numpy()
                 MFLOPS += (policy_mask * MFLOPS_table[policy_idx]).sum().cpu().numpy()
+                # output, policy_mask, indices, target
+        assert int(len(loader.dataset)) == int(cnt)
         logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS(avg):{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
             time.time() - t_start, tau, MFLOPS/cnt, epoch,
             FLAGS.num_epochs, loss/cnt, acc/cnt))
@@ -220,7 +226,7 @@ def train_val_test():
 
     if FLAGS.test_only:
         logger.info('Start testing.')
-        validate(last_epoch, val_loader, model_wrapper, criterion_val, train_loader, MFLOPS_table)
+        validate(last_epoch + 1, val_loader, model_wrapper, criterion_val, train_loader, MFLOPS_table)
         return
 
     logger.info('Start training.')
