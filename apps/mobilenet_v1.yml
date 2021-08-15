@@ -9,8 +9,8 @@ num_classes: 1000
 image_resize: 256
 image_size: 224
 num_epochs: 250
-warm_up: 20
-joint: 120
+warm_up: 50
+joint: 100
 print_freq: 100
 
 # optimizer

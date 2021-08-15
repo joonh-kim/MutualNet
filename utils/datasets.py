@@ -34,7 +34,6 @@ def get_imagenet():
         transforms.CenterCrop(FLAGS.image_size),
         transforms.ToTensor(),
         transforms.Normalize(mean=mean, std=std),
-        InputList(FLAGS.resolution_list),
     ])
     train_set = datasets.ImageFolder(os.path.join(FLAGS.dataset_dir, 'train'), transform=train_transforms)
     val_set = datasets.ImageFolder(os.path.join(FLAGS.dataset_dir, 'val'), transform=val_transforms)
