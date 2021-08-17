@@ -117,8 +117,8 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
                 lambda m: setattr(m, 'width_mult', width_mult))
             output_i = model(input_list[idx + 1])
             output_list[idx] = output_i
-        output = mask.permute(1, 0).unsqueeze(-1) * output_list
-        output = torch.cat((max_output_detach.unsqueeze(0), output), dim=0).sum(dim=0)
+        output = torch.cat((max_output_detach.unsqueeze(0), output_list), dim=0)
+        output = (policy_mask.permute(1, 0).unsqueeze(-1) * output).sum(dim=0)
         loss = torch.nn.KLDivLoss(reduction='batchmean')(F.log_softmax(output, dim=1),
                                                          F.softmax(max_output_detach, dim=1))
         # loss += 1e-5 * (policy_mask * MFLOPS_table.unsqueeze(0)).mean()
@@ -137,6 +137,56 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
                     time.time() - t_start, optimizer.param_groups[0]['lr'], tau, mean_MFLOPS,
                     epoch, FLAGS.num_epochs, batch_idx, len(loader), loss, acc))
 
+# def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_scheduler, MFLOPS_table):
+#     t_start = time.time()
+#     model.train()
+#     if epoch < warm_up:
+#         for param in model.module.attn.parameters():
+#             param.requires_grad = False
+#         for param in model.module.linear.parameters():
+#             param.requires_grad = False
+#     elif warm_up <= epoch < (warm_up + joint):
+#         for param in model.module.attn.parameters():
+#             param.requires_grad = True
+#         for param in model.module.linear.parameters():
+#             param.requires_grad = True
+#     else:
+#         for param in model.module.attn.parameters():
+#             param.requires_grad = False
+#         for param in model.module.linear.parameters():
+#             param.requires_grad = False
+#     tau = FLAGS.tau * np.exp(FLAGS.exp_decay_factor * (epoch - 1))
+#
+#     for batch_idx, (input_list, target) in enumerate(loader):
+#         target = target.cuda(non_blocking=True)
+#         optimizer.zero_grad()
+#
+#         # policy selection
+#         policy_mask = model(input_list[-1], tau=tau, policy=True)
+#
+#         # do other widths and resolution
+#         output_list = torch.zeros(len(FLAGS.width_mult_list), target.size()[0], FLAGS.num_classes).cuda(non_blocking=True)
+#         for idx, width_mult in enumerate(sorted(FLAGS.width_mult_list, reverse=True)):
+#             model.apply(lambda m: setattr(m, 'width_mult', width_mult))
+#             output_list[idx] = model(input_list[idx])
+#         output = policy_mask.permute(1, 0).unsqueeze(-1) * output_list
+#         ce_loss = criterion(output, target)
+#         mflops_loss = (policy_mask * MFLOPS_table.unsqueeze(0)).sum(dim=1).mean()
+#         loss = ce_loss + 1e-5 * mflops_loss
+#         loss.backward()
+#         optimizer.step()
+#         lr_scheduler.step()
+#         # print training log
+#         if batch_idx % FLAGS.print_freq == 0 or batch_idx == len(loader)-1:
+#             with torch.no_grad():
+#                 indices = torch.max(output, dim=1)[1]
+#                 acc = (indices == target).sum().cpu().numpy() / indices.size()[0]
+#
+#                 logger.info('TRAIN {:.1f}s LR:{:.4f} tau:{:.3f} Epoch:{}/{} '
+#                             'Iter:{}/{} CE_Loss:{:.4f} MFLOPS_Loss:{:.2f} Acc:{:.3f}'.format(
+#                     time.time() - t_start, optimizer.param_groups[0]['lr'], tau, epoch, FLAGS.num_epochs,
+#                     batch_idx, len(loader), ce_loss, mflops_loss, acc))
+
 
 def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
     t_start = time.time()
@@ -150,24 +200,32 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
             policy_mask_list[batch_idx, :target.size()[0], :] = \
                 model(F.interpolate(input, (lowest_res, lowest_res), mode='bilinear', align_corners=True),
                       tau=tau, policy=True)
-            print('{}/{}'.format(batch_idx, len(loader)))
+            # print('{}/{}'.format(batch_idx, len(loader)))
         policy_mask_list = policy_mask_list.detach().cpu().numpy()
+        logger.info('VAL {:.1f}s Policy Mask Generated!'.format(time.time() - t_start))
         loss, acc, cnt, MFLOPS = 0, 0, 0, 0
         for policy_idx, width_mult in enumerate(sorted(FLAGS.width_mult_list)):
             model.apply(lambda m: setattr(m, 'width_mult', width_mult))
             resolution = FLAGS.resolution_list[-(policy_idx+1)]
             model = ComputePostBN.ComputeBN(model, postloader, resolution)
+            loss_res, acc_res, cnt_res, MFLOPS_res = 0, 0, 0, 0
             for batch_idx, (input, target) in enumerate(loader):
                 input, target = input.cuda(non_blocking=True), target.cuda(non_blocking=True)
                 policy_mask = torch.LongTensor(policy_mask_list[batch_idx, :target.size()[0], :]).permute(1, 0)[-(policy_idx+1)].cuda()
                 target = (target + 1) * policy_mask - 1
                 output = model(F.interpolate(input, (resolution, resolution), mode='bilinear', align_corners=True))
                 loss += criterion(output, target).sum().cpu().numpy()
+                loss_res += criterion(output, target).sum().cpu().numpy()
                 indices = torch.max(output, dim=1)[1]
                 acc += ((indices == target) * policy_mask).sum().cpu().numpy()
+                acc_res += ((indices == target) * policy_mask).sum().cpu().numpy()
                 cnt += policy_mask.sum().cpu().numpy()
+                cnt_res += policy_mask.sum().cpu().numpy()
                 MFLOPS += (policy_mask.sum() * MFLOPS_table[-(policy_idx+1)]).cpu().numpy()
-                # output, policy_mask, indices, target
+                MFLOPS_res += (policy_mask.sum() * MFLOPS_table[-(policy_idx+1)]).cpu().numpy()
+            logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS(avg):{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
+                time.time() - t_start, tau, MFLOPS_res / cnt_res, epoch,
+                FLAGS.num_epochs, loss_res / cnt_res, acc_res / cnt_res))
         assert int(len(loader.dataset)) == int(cnt)
         logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS(avg):{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
             time.time() - t_start, tau, MFLOPS/cnt, epoch,
