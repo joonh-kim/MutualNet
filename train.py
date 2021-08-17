@@ -108,7 +108,6 @@ def train(epoch, warm_up, joint, loader, model, criterion, optimizer, lr_schedul
 
         # policy selection
         policy_mask = model(input_list[-1], tau=tau, policy=True)
-        mask = policy_mask[:, 1:].clone()
 
         # do other widths and resolution
         output_list = torch.zeros(len(FLAGS.width_mult_list) - 1, target.size()[0], FLAGS.num_classes).cuda(non_blocking=True)
@@ -223,7 +222,7 @@ def validate(epoch, loader, model, criterion, postloader, MFLOPS_table):
                 cnt_res += policy_mask.sum().cpu().numpy()
                 MFLOPS += (policy_mask.sum() * MFLOPS_table[-(policy_idx+1)]).cpu().numpy()
                 MFLOPS_res += (policy_mask.sum() * MFLOPS_table[-(policy_idx+1)]).cpu().numpy()
-            logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS(avg):{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
+            logger.info('VAL {:.1f}s tau:{:.3f} MFLOPS:{:.2f} Epoch:{}/{} Loss:{:.4f} Acc:{:.3f}'.format(
                 time.time() - t_start, tau, MFLOPS_res / cnt_res, epoch,
                 FLAGS.num_epochs, loss_res / cnt_res, acc_res / cnt_res))
         assert int(len(loader.dataset)) == int(cnt)
